@@ -191,6 +191,8 @@ monthly_contribution = st.sidebar.number_input(
     step=50
 )
 
+st.sidebar.subheader("⚖️ Konfiguracja rebalansingu")
+
 rebalancing_mode = st.sidebar.selectbox(
     "Tryb rebalansingu",
     options=["Budżet stały", "AUTO-CASH-FLOW"],
@@ -212,6 +214,8 @@ else:
     st.sidebar.info("🤖 **AUTO-CASH-FLOW REBALANCING**\n\nSystem automatycznie doliczy środki potrzebne do idealnego utrzymania proporcji portfela")
     rebalancing_budget = 0  # Nie używany w trybie auto
     auto_rebalancing = True
+
+st.sidebar.markdown("---")
 
 # Wybór okresu inwestycji z kalendarza
 if lbma_df is not None and len(lbma_df) > 0:
