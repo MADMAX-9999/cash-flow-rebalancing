@@ -53,11 +53,6 @@ def calculate_monthly_returns(df, start_date, months):
     """Oblicz miesięczne zmiany cen na podstawie rzeczywistych danych LBMA"""
     
     try:
-        # Debug - sprawdź typy danych
-        st.write(f"Debug - start_date type: {type(start_date)}")
-        st.write(f"Debug - start_date value: {start_date}")
-        st.write(f"Debug - df['Date'] dtype: {df['Date'].dtype}")
-        
         # Konwersja start_date na datetime - różne przypadki
         if pd.api.types.is_datetime64_any_dtype(start_date):
             start_date_dt = start_date
@@ -84,15 +79,11 @@ def calculate_monthly_returns(df, start_date, months):
             df = df.copy()
             df['Date'] = df['Date'].dt.tz_localize(None)
         
-        st.write(f"Debug - po konwersji start_date_dt: {start_date_dt} (type: {type(start_date_dt)})")
-        st.write(f"Debug - po konwersji df['Date'] dtype: {df['Date'].dtype}")
-        
         # Filtrowanie danych od podanej daty
         df_filtered = df[df['Date'] >= start_date_dt].copy()
         
     except Exception as e:
         st.error(f"Błąd w calculate_monthly_returns: {str(e)}")
-        st.write("Używam fallback - symulowane dane")
         return generate_simulated_returns(months), pd.DataFrame()
     
     if len(df_filtered) == 0:
