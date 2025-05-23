@@ -32,6 +32,11 @@ def load_lbma_data():
         # Usuń rekordy z nieprawidłowymi datami
         df = df.dropna(subset=['Date'])
         
+        # Sprawdź czy są jakieś dane
+        if len(df) == 0:
+            st.error("❌ Brak prawidłowych danych po wczytaniu")
+            return None
+        
         # Konwersja z uncji na gramy (podzielenie przez wagę uncji trojańskiej)
         df['Gold_EUR_per_gram'] = df['Gold_EUR'] / TROY_OUNCE_TO_GRAMS
         df['Silver_EUR_per_gram'] = df['Silver_EUR'] / TROY_OUNCE_TO_GRAMS
@@ -48,6 +53,16 @@ def load_lbma_data():
     except Exception as e:
         st.error(f"❌ Błąd podczas wczytywania danych: {str(e)}")
         return None
+
+def generate_simulated_returns(months):
+    """Generuj symulowane zwroty jako fallback"""
+    np.random.seed(42)  # Dla powtarzalności
+    return {
+        'gold': np.random.normal(0.008, 0.025, months).tolist(),
+        'silver': np.random.normal(0.005, 0.035, months).tolist(),
+        'platinum': np.random.normal(0.003, 0.030, months).tolist(),
+        'palladium': np.random.normal(0.010, 0.045, months).tolist()
+    }
 
 def calculate_monthly_returns(df, start_date, end_date, months):
     """Oblicz miesięczne zmiany cen na podstawie rzeczywistych danych LBMA"""
@@ -87,55 +102,45 @@ def calculate_monthly_returns(df, start_date, end_date, months):
         # Filtrowanie danych w wybranym okresie
         df_filtered = df[(df['Date'] >= start_date_dt) & (df['Date'] <= end_date_dt)].copy()
         
+        if len(df_filtered) == 0:
+            st.warning(f"⚠️ Brak danych w wybranym okresie. Używam symulowanych danych.")
+            return generate_simulated_returns(months), pd.DataFrame()
+        
+        # Grupowanie po miesiącach i obliczanie średnich cen
+        df_filtered['YearMonth'] = df_filtered['Date'].dt.to_period('M')
+        monthly_avg = df_filtered.groupby('YearMonth')[
+            ['Gold_EUR_per_gram', 'Silver_EUR_per_gram', 'Platinum_EUR_per_gram', 'Palladium_EUR_per_gram']
+        ].mean().reset_index()
+        
+        if len(monthly_avg) < 2:
+            st.warning("⚠️ Za mało danych historycznych. Używam symulowanych zmian.")
+            return generate_simulated_returns(months), pd.DataFrame()
+        
+        # Obliczenie miesięcznych zwrotów
+        returns = {}
+        metals = ['Gold', 'Silver', 'Platinum', 'Palladium']
+        
+        for metal in metals:
+            col_name = f'{metal}_EUR_per_gram'
+            if col_name in monthly_avg.columns:
+                prices = monthly_avg[col_name].values
+                monthly_changes = []
+                
+                for i in range(1, len(prices)):
+                    change = (prices[i] - prices[i-1]) / prices[i-1]
+                    monthly_changes.append(change)
+                
+                # Jeśli potrzebujemy więcej danych niż mamy, uzupełniamy losowo z historycznych
+                while len(monthly_changes) < months:
+                    monthly_changes.extend(monthly_changes[:min(len(monthly_changes), months - len(monthly_changes))])
+                
+                returns[metal.lower()] = monthly_changes[:months]
+        
+        return returns, monthly_avg
+        
     except Exception as e:
         st.error(f"Błąd w calculate_monthly_returns: {str(e)}")
         return generate_simulated_returns(months), pd.DataFrame()
-    
-    if len(df_filtered) == 0:
-        st.warning(f"⚠️ Brak danych od {start_date.strftime('%Y-%m-%d')}. Używam najnowszych dostępnych danych.")
-        df_filtered = df.tail(months * 30).copy()  # Przybliżenie: 30 dni = 1 miesiąc
-    
-    # Grupowanie po miesiącach i obliczanie średnich cen
-    df_filtered['YearMonth'] = df_filtered['Date'].dt.to_period('M')
-    monthly_avg = df_filtered.groupby('YearMonth')[
-        ['Gold_EUR_per_gram', 'Silver_EUR_per_gram', 'Platinum_EUR_per_gram', 'Palladium_EUR_per_gram']
-    ].mean().reset_index()
-    
-    if len(monthly_avg) < 2:
-        st.warning("⚠️ Za mało danych historycznych. Używam symulowanych zmian.")
-        return generate_simulated_returns(months)
-    
-    # Obliczenie miesięcznych zwrotów
-    returns = {}
-    metals = ['Gold', 'Silver', 'Platinum', 'Palladium']
-    
-    for metal in metals:
-        col_name = f'{metal}_EUR_per_gram'
-        if col_name in monthly_avg.columns:
-            prices = monthly_avg[col_name].values
-            monthly_changes = []
-            
-            for i in range(1, len(prices)):
-                change = (prices[i] - prices[i-1]) / prices[i-1]
-                monthly_changes.append(change)
-            
-            # Jeśli potrzebujemy więcej danych niż mamy, uzupełniamy losowo z historycznych
-            while len(monthly_changes) < months:
-                monthly_changes.extend(monthly_changes[:min(len(monthly_changes), months - len(monthly_changes))])
-            
-            returns[metal.lower()] = monthly_changes[:months]
-    
-    return returns, monthly_avg
-
-def generate_simulated_returns(months):
-    """Generuj symulowane zwroty jako fallback"""
-    np.random.seed(42)  # Dla powtarzalności
-    return {
-        'gold': np.random.normal(0.008, 0.025, months).tolist(),
-        'silver': np.random.normal(0.005, 0.035, months).tolist(),
-        'platinum': np.random.normal(0.003, 0.030, months).tolist(),
-        'palladium': np.random.normal(0.010, 0.045, months).tolist()
-    }
 
 def get_current_prices(df):
     """Pobierz najnowsze ceny metali za gram"""
@@ -150,6 +155,7 @@ def get_current_prices(df):
         'palladium': latest_data['Palladium_EUR_per_gram'],
         'date': latest_data['Date'].strftime('%Y-%m-%d')
     }
+
 
 # Tytuł aplikacji
 st.title("🥇 Symulator Inwestycji w Metale Szlachetne")
@@ -191,77 +197,6 @@ monthly_contribution = st.sidebar.number_input(
     step=50
 )
 
-st.sidebar.subheader("⚖️ Konfiguracja rebalansingu")
-
-rebalancing_mode = st.sidebar.selectbox(
-    "Strategia rebalansingu",
-    options=["Budżet stały", "AUTO-CASH-FLOW", "Pasma tolerancji (BAND)"],
-    index=0,
-    help="Budżet stały: określasz maksymalną kwotę na rebalansing\nAUTO-CASH-FLOW: system automatycznie dodaje środki potrzebne do idealnego rebalansingu\nPasma tolerancji: rebalansing tylko gdy metal wyjdzie poza swoje pasmo"
-)
-
-if rebalancing_mode == "Budżet stały":
-    rebalancing_budget = st.sidebar.number_input(
-        "Budżet na rebalansing (EUR/miesiąc)", 
-        min_value=0, 
-        max_value=5000, 
-        value=100, 
-        step=25,
-        help="Dodatkowe środki przeznaczone wyłącznie na rebalansing portfela"
-    )
-    auto_rebalancing = False
-    band_rebalancing = False
-    
-elif rebalancing_mode == "AUTO-CASH-FLOW":
-    st.sidebar.info("🤖 **AUTO-CASH-FLOW REBALANCING**\n\nSystem automatycznie doliczy środki potrzebne do idealnego utrzymania proporcji portfela")
-    rebalancing_budget = 0  # Nie używany w trybie auto
-    auto_rebalancing = True
-    band_rebalancing = False
-    
-else:  # Pasma tolerancji
-    st.sidebar.info("📊 **BAND REBALANCING**\n\nRebalansing tylko gdy metal wyjdzie poza swoje pasmo tolerancji")
-    
-    # Budżet dla rebalansingu pasma
-    rebalancing_budget = st.sidebar.number_input(
-        "Budżet na rebalansing (EUR/miesiąc)", 
-        min_value=0, 
-        max_value=5000, 
-        value=200, 
-        step=25,
-        help="Środki używane gdy metal wyjdzie poza pasmo tolerancji"
-    )
-    
-    st.sidebar.markdown("**Szerokość pasm tolerancji:**")
-    
-    # Pasma tolerancji dla każdego metalu
-    gold_band = st.sidebar.slider(
-        "🥇 Złoto - szerokość pasma (%)", 
-        min_value=1, max_value=15, value=5, step=1,
-        help=f"Pasmo: {target_gold-5}% - {target_gold+5}% (cel: {target_gold}%)"
-    )
-    
-    silver_band = st.sidebar.slider(
-        "🥈 Srebro - szerokość pasma (%)", 
-        min_value=1, max_value=15, value=7, step=1,
-        help=f"Pasmo: {target_silver-7}% - {target_silver+7}% (cel: {target_silver}%)"
-    )
-    
-    platinum_band = st.sidebar.slider(
-        "⚪ Platyna - szerokość pasma (%)", 
-        min_value=1, max_value=15, value=6, step=1,
-        help=f"Pasmo: {target_platinum-6}% - {target_platinum+6}% (cel: {target_platinum}%)"
-    )
-    
-    palladium_band = st.sidebar.slider(
-        "⚫ Pallad - szerokość pasma (%)", 
-        min_value=1, max_value=15, value=8, step=1,
-        help=f"Pasmo: {target_palladium-8}% - {target_palladium+8}% (cel: {target_palladium}%)"
-    )
-    
-    auto_rebalancing = False
-    band_rebalancing = True
-
-st.sidebar.markdown("---")
 
 # Wybór okresu inwestycji z kalendarza
 if lbma_df is not None and len(lbma_df) > 0:
@@ -308,6 +243,52 @@ else:
     end_date = None
     simulation_months = 24
 
+st.sidebar.subheader("⚖️ Konfiguracja rebalansingu")
+
+rebalancing_mode = st.sidebar.selectbox(
+    "Strategia rebalansingu",
+    options=["Budżet stały", "AUTO-CASH-FLOW", "Pasma tolerancji (BAND)"],
+    index=0,
+    help="Budżet stały: określasz maksymalną kwotę na rebalansing\nAUTO-CASH-FLOW: system automatycznie dodaje środki potrzebne do idealnego rebalansingu\nPasma tolerancji: rebalansing tylko gdy metal wyjdzie poza swoje pasmo"
+)
+
+
+if rebalancing_mode == "Budżet stały":
+    rebalancing_budget = st.sidebar.number_input(
+        "Budżet na rebalansing (EUR/miesiąc)", 
+        min_value=0, 
+        max_value=5000, 
+        value=100, 
+        step=25,
+        help="Dodatkowe środki przeznaczone wyłącznie na rebalansing portfela"
+    )
+    auto_rebalancing = False
+    band_rebalancing = False
+    
+elif rebalancing_mode == "AUTO-CASH-FLOW":
+    st.sidebar.info("🤖 **AUTO-CASH-FLOW REBALANCING**\n\nSystem automatycznie doliczy środki potrzebne do idealnego utrzymania proporcji portfela")
+    rebalancing_budget = 0  # Nie używany w trybie auto
+    auto_rebalancing = True
+    band_rebalancing = False
+    
+else:  # Pasma tolerancji
+    st.sidebar.info("📊 **BAND REBALANCING**\n\nRebalansing tylko gdy metal wyjdzie poza swoje pasmo tolerancji")
+    
+    # Budżet dla rebalansingu pasma
+    rebalancing_budget = st.sidebar.number_input(
+        "Budżet na rebalansing (EUR/miesiąc)", 
+        min_value=0, 
+        max_value=5000, 
+        value=200, 
+        step=25,
+        help="Środki używane gdy metal wyjdzie poza pasmo tolerancji"
+    )
+    
+    auto_rebalancing = False
+    band_rebalancing = True
+
+st.sidebar.markdown("---")
+
 rebalance_frequency = st.sidebar.selectbox(
     "Częstotliwość rebalansingu",
     options=[1, 3, 6, 12],
@@ -323,6 +304,36 @@ target_silver = st.sidebar.slider("🥈 Srebro (%)", 0, 100, 30, 5)
 target_platinum = st.sidebar.slider("⚪ Platyna (%)", 0, 100, 20, 5)
 target_palladium = st.sidebar.slider("⚫ Pallad (%)", 0, 100, 10, 5)
 
+
+# Konfiguracja pasm dla BAND REBALANCING
+if rebalancing_mode == "Pasma tolerancji (BAND)":
+    st.sidebar.markdown("**Szerokość pasm tolerancji:**")
+    
+    # Pasma tolerancji dla każdego metalu
+    gold_band = st.sidebar.slider(
+        "🥇 Złoto - szerokość pasma (%)", 
+        min_value=1, max_value=15, value=5, step=1,
+        help=f"Pasmo: {target_gold-5}% - {target_gold+5}% (cel: {target_gold}%)"
+    )
+    
+    silver_band = st.sidebar.slider(
+        "🥈 Srebro - szerokość pasma (%)", 
+        min_value=1, max_value=15, value=7, step=1,
+        help=f"Pasmo: {target_silver-7}% - {target_silver+7}% (cel: {target_silver}%)"
+    )
+    
+    platinum_band = st.sidebar.slider(
+        "⚪ Platyna - szerokość pasma (%)", 
+        min_value=1, max_value=15, value=6, step=1,
+        help=f"Pasmo: {target_platinum-6}% - {target_platinum+6}% (cel: {target_platinum}%)"
+    )
+    
+    palladium_band = st.sidebar.slider(
+        "⚫ Pallad - szerokość pasma (%)", 
+        min_value=1, max_value=15, value=8, step=1,
+        help=f"Pasmo: {target_palladium-8}% - {target_palladium+8}% (cel: {target_palladium}%)"
+    )
+
 # Sprawdzenie czy suma wynosi 100%
 total_allocation = target_gold + target_silver + target_platinum + target_palladium
 if total_allocation != 100:
@@ -330,6 +341,7 @@ if total_allocation != 100:
 
 # Przycisk uruchomienia symulacji
 run_simulation = st.sidebar.button("🚀 Uruchom Symulację", type="primary")
+
 
 def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, months, rebalance_freq, allocations, price_changes, auto_rebalancing=False, band_rebalancing=False, bands=None):
     """Główna funkcja symulacji portfela z rzeczywistymi danymi i różnymi strategiami rebalancingu"""
@@ -378,8 +390,9 @@ def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, mont
                     eur_to_invest = monthly_cont * (target_percent / 100)
                     grams_to_add = eur_to_invest / prices[metal]
                     portfolio_grams[metal] += grams_to_add
-            
-            # Sprawdź czy potrzebny jest rebalansing
+
+
+# Sprawdź czy potrzebny jest rebalansing
             rebalancing_needed = False
             rebalancing_spent_this_cycle = 0
             
@@ -452,8 +465,11 @@ def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, mont
                                 'metals': list(metals_outside_bands.keys()),
                                 'spent': rebalancing_spent_this_cycle
                             })
-                
-                elif auto_rebalancing:
+
+
+
+
+elif auto_rebalancing:
                     # AUTO-CASH-FLOW: dodaj tyle środków ile potrzeba dla idealnego rebalansingu
                     underweight_metals = {k: v for k, v in allocation_differences.items() if v > 0}
                     
@@ -479,8 +495,34 @@ def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, mont
                 else:
                     # Rebalansing z ograniczonym budżetem (poprzednia logika)
                     underweight_metals = {k: v for k, v in allocation_differences.items() if v > 0}
-                    
-                    if underweight_metals and rebalancing_budget > 0:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+if underweight_metals and rebalancing_budget > 0:
                         available_rebalancing_budget = rebalancing_budget * rebalance_freq
                         total_deficit = sum(underweight_metals.values())
                         
@@ -543,6 +585,7 @@ def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, mont
     
     return pd.DataFrame(simulation_data), portfolio_grams, prices, total_regular_invested, total_rebalancing_spent, rebalancing_triggers
 
+
 # Uruchomienie symulacji
 if run_simulation and total_allocation == 100 and lbma_df is not None and start_date is not None and end_date is not None and end_date > start_date:
     with st.spinner('🔄 Analizowanie danych LBMA i symulowanie inwestycji...'):
@@ -586,8 +629,10 @@ if run_simulation and total_allocation == 100 and lbma_df is not None and start_
         final_value = df['Łączna_wartość'].iloc[-1]
         total_return = final_value - total_invested
         return_percentage = (total_return / total_invested) * 100 if total_invested > 0 else 0
-        
-        # Wyświetlenie statystyk
+
+
+
+# Wyświetlenie statystyk
         col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
@@ -638,8 +683,10 @@ if run_simulation and total_allocation == 100 and lbma_df is not None and start_
                 f"{simulation_months} miesięcy",
                 f"{actual_days} dni ({actual_days/365.25:.1f} lat)"
             )
-        
-        # Wykresy
+
+
+
+# Wykresy
         col1, col2 = st.columns([2, 1])
         
         with col1:
@@ -700,8 +747,11 @@ if run_simulation and total_allocation == 100 and lbma_df is not None and start_
             
             fig_pie.update_layout(height=400)
             st.plotly_chart(fig_pie, use_container_width=True)
-        
-        # Tabela szczegółowa portfela
+
+
+
+
+# Tabela szczegółowa portfela
         st.subheader("📋 Szczegóły końcowego portfela")
         
         final_data = df.iloc[-1]
@@ -756,6 +806,129 @@ if run_simulation and total_allocation == 100 and lbma_df is not None and start_
         
         st.plotly_chart(fig_prices, use_container_width=True)
 
+
+# Wykres alokacji w czasie
+        if auto_rebalancing:
+            st.subheader("🎯 Precyzja AUTO-CASH-FLOW REBALANCING")
+            st.info("W trybie AUTO alokacja powinna być idealnie utrzymana na poziomie docelowym")
+        elif band_rebalancing:
+            st.subheader("📊 BAND REBALANCING - Pasma tolerancji")
+            st.info(f"Rebalansing następuje gdy metal wyjdzie poza swoje pasmo • Liczba interwencji: {len(triggers)}")
+        else:
+            st.subheader("📊 Zmiana alokacji w czasie")
+        
+        fig_allocation = go.Figure()
+        
+        # Dodaj pasma tolerancji dla BAND REBALANCING
+        if band_rebalancing and bands:
+            metals_info = [
+                ('Złoto', target_gold, bands['gold'], 'gold'),
+                ('Srebro', target_silver, bands['silver'], 'silver'), 
+                ('Platyna', target_platinum, bands['platinum'], 'lightgray'),
+                ('Pallad', target_palladium, bands['palladium'], 'lightsteelblue')
+            ]
+            
+            for metal_name, target_pct, band_width, color in metals_info:
+                # Górna granica pasma
+                fig_allocation.add_hline(
+                    y=target_pct + band_width, 
+                    line_dash="dash", 
+                    line_color=color,
+                    opacity=0.7,
+                    annotation_text=f"{metal_name} +{band_width}%",
+                    annotation_position="right"
+                )
+                # Dolna granica pasma
+                fig_allocation.add_hline(
+                    y=target_pct - band_width, 
+                    line_dash="dash", 
+                    line_color=color,
+                    opacity=0.7,
+                    annotation_text=f"{metal_name} -{band_width}%",
+                    annotation_position="right"
+                )
+                # Cel (środek pasma)
+                fig_allocation.add_hline(
+                    y=target_pct, 
+                    line_dash="solid", 
+                    line_color=color,
+                    opacity=0.5,
+                    line_width=1
+                )
+        elif not band_rebalancing:
+            # Dodaj linie docelowych alokacji jako punkty odniesienia (dla innych trybów)
+            for metal, target_pct in [('Złoto', target_gold), ('Srebro', target_silver), 
+                                     ('Platyna', target_platinum), ('Pallad', target_palladium)]:
+                fig_allocation.add_hline(
+                    y=target_pct, 
+                    line_dash="dash", 
+                    line_color="red",
+                    annotation_text=f"Cel {metal}: {target_pct}%",
+                    annotation_position="right"
+                )
+
+
+# Dodaj rzeczywiste alokacje
+        colors_allocation = {'Złoto_%': 'gold', 'Srebro_%': 'silver', 'Platyna_%': 'lightgray', 'Pallad_%': 'lightsteelblue'}
+        for metal, color in colors_allocation.items():
+            fig_allocation.add_trace(go.Scatter(
+                x=df['Miesiąc'],
+                y=df[metal],
+                mode='lines',
+                name=metal.replace('_%', ''),
+                line=dict(color=color, width=3 if auto_rebalancing else 2),
+                hovertemplate=f'{metal.replace("_%", "")}: %{{y:.1f}}%<extra></extra>'
+            ))
+        
+        # Zaznacz momenty rebalansingu dla BAND
+        if band_rebalancing and triggers:
+            for trigger in triggers:
+                fig_allocation.add_vline(
+                    x=trigger['month'],
+                    line_dash="dot",
+                    line_color="red",
+                    annotation_text=f"Rebalancing: {trigger['spent']:.0f}€",
+                    annotation_position="top"
+                )
+        
+        fig_allocation.update_layout(
+            xaxis_title="Miesiąc",
+            yaxis_title="Alokacja (%)",
+            yaxis=dict(range=[0, max(100, max(target_gold, target_silver, target_platinum, target_palladium) + 15)]),
+            hovermode='x unified',
+            height=400
+        )
+        
+        st.plotly_chart(fig_allocation, use_container_width=True)
+        
+        # Dodatkowe informacje dla BAND REBALANCING
+        if band_rebalancing and len(triggers) > 0:
+            st.subheader("🔔 Historia interwencji BAND REBALANCING")
+            
+            triggers_df = pd.DataFrame([
+                {
+                    'Miesiąc': t['month'],
+                    'Powód': f"Naruszenie pasma: {', '.join(t['metals'])}",
+                    'Wydano (€)': f"{t['spent']:.0f}",
+                    'Metale': ', '.join(t['metals'])
+                }
+                for t in triggers
+            ])
+            
+            st.dataframe(triggers_df, use_container_width=True, hide_index=True)
+            
+            # Statystyki interwencji
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Liczba interwencji", len(triggers))
+            with col2:
+                avg_spending = sum(t['spent'] for t in triggers) / len(triggers) if triggers else 0
+                st.metric("Średni koszt interwencji", f"{avg_spending:.0f} €")
+            with col3:
+                months_between = simulation_months / len(triggers) if triggers else simulation_months
+                st.metric("Średni odstęp", f"{months_between:.1f} miesięcy")
+
+
 elif run_simulation and total_allocation != 100:
     st.error("❌ Nie można uruchomić symulacji - suma alokacji musi wynosić 100%!")
 elif run_simulation and lbma_df is None:
@@ -767,6 +940,95 @@ elif run_simulation and end_date <= start_date:
 
 # Informacje o aplikacji
 st.markdown("---")
+with st.expander("🔄 Porównanie strategii rebalansingu"):
+    st.markdown("""
+    ## **Budżet stały** vs **AUTO-CASH-FLOW** vs **BAND REBALANCING**
+    
+    ### 📊 **Budżet stały**
+    - ✅ **Kontrolowany koszt** - ustalasz maksymalną kwotę na rebalansing
+    - ✅ **Przewidywalność** - znasz dokładne koszty z góry
+    - ⚠️ **Ograniczona precyzja** - może nie wystarczyć na idealne proporcje
+    - 👤 **Dla konserwatywnych** - lubisz mieć pełną kontrolę nad budżetem
+    
+    ### 🤖 **AUTO-CASH-FLOW REBALANCING**
+    - ✅ **Idealna precyzja** - alokacja zawsze dokładnie na poziomie docelowym
+    - ✅ **Maksymalna skuteczność** - wykorzystuje każdą okazję rynkową
+    - ✅ **Brak limitów** - system dodaje tyle środków ile potrzeba
+    - ⚠️ **Nieprzewidywalny koszt** - może wymagać dużych nakładów w trudnych okresach
+    - 🚀 **Dla agresywnych** - priorytetem jest optymalna alokacja bez względu na koszt
+    
+    ### 📊 **BAND REBALANCING (Pasma tolerancji)**
+    - ✅ **Inteligentna selekcja** - rebalansing tylko gdy rzeczywiście potrzebny
+    - ✅ **Kontrola kosztów** - ograniczony budżet + rzadsze interwencje
+    - ✅ **Profesjonalne podejście** - używane przez fundusze inwestycyjne
+    - ✅ **Różne progi** - możliwość dostosowania do charakterystyki każdego metalu
+    - ⚠️ **Złożoność** - wymaga dobrania odpowiednich szerokości pasm
+    - 🎯 **Dla zaawansowanych** - chcesz efektywnego rebalansingu bez nadmiernych kosztów
+    
+    ### 💡 **Kiedy wybrać którą strategię?**
+    
+    **Budżet stały** wybierz gdy:
+    - Masz ograniczony budżet dodatkowy
+    - Chcesz kontrolować koszty rebalansingu
+    - Preferujesz przewidywalność nad precyzją
+    
+    **AUTO-CASH-FLOW** wybierz gdy:
+    - Zależy Ci na idealnym utrzymaniu proporcji
+    - Masz elastyczny budżet 
+    - Chcesz przetestować "teoretycznie idealną" strategię
+    
+    **BAND REBALANCING** wybierz gdy:
+    - Chcesz profesjonalnego podejścia do rebalansingu
+    - Zależy Ci na efektywności kosztowej
+    - Potrafisz dostroić parametry pasm dla różnych metali
+    - Wolisz rzadsze, ale celne interwencje
+    """)
+
+
+
+
+
+
+
+with st.expander("📊 Jak działa BAND REBALANCING?"):
+    st.markdown("""
+    **BAND REBALANCING - szczegółowe działanie:**
+    
+    ### 🎯 **Koncept pasm tolerancji**
+    Każdy metal ma swoje "pasmo tolerancji" wokół docelowej alokacji:
+    - **Cel:** 40% dla złota
+    - **Pasmo:** ±5% → akceptowalne: 35% - 45%
+    - **Rebalansing:** tylko gdy alokacja wyjdzie poza 35-45%
+    
+    ### 🔍 **Przykład działania**
+    
+    **Sytuacja startowa:**
+    - Złoto: cel 40%, pasmo ±5% (35%-45%)
+    - Srebro: cel 30%, pasmo ±7% (23%-37%)
+    - Platyna: cel 20%, pasmo ±6% (14%-26%)
+    - Pallad: cel 10%, pasmo ±8% (2%-18%)
+    
+    **Po 3 miesiącach wahań:**
+    - ✅ Złoto: 42% (w paśmie 35-45%) → **brak akcji**
+    - ❌ Srebro: 21% (poza pasmem 23-37%) → **rebalansing!**
+    - ✅ Platyna: 25% (w paśmie 14-26%) → **brak akcji**
+    - ❌ Pallad: 19% (poza pasmem 2-18%) → **rebalansing!**
+    
+    **Akcja:** System dokupuje srebro i pallad z budżetu rebalansingu
+    
+    ### ⚙️ **Zalety tego podejścia**
+    1. **Mniej transakcji** - rebalansing tylko gdy potrzebny
+    2. **Niższe koszty** - rzadsze interwencje
+    3. **Elastyczność** - różne progi dla różnych metali
+    4. **Profesjonalizm** - strategia stosowana przez instytucje
+    
+    ### 🎛️ **Jak ustawiać szerokość pasm?**
+    - **Wąskie pasma (3-5%):** Częstszy rebalansing, wyższa precyzja
+    - **Szerokie pasma (8-12%):** Rzadszy rebalansing, niższe koszty
+    - **Dla zmiennych metali (pallad):** Szersze pasma
+    - **Dla stabilnych metali (złoto):** Węższe pasma
+    """)
+    
 with st.expander("ℹ️ O danych LBMA"):
     if lbma_df is not None:
         st.markdown(f"""
@@ -780,21 +1042,6 @@ with st.expander("ℹ️ O danych LBMA"):
         **Przeliczenie:** 1 uncja trojańska = {TROY_OUNCE_TO_GRAMS} gramów
         """)
 
-with st.expander("🔄 Jak działa rebalansing metodą cash-flow?"):
-    st.markdown("""
-    **Rebalansing metodą cash-flow** w kontekście metali szlachetnych:
-    
-    1. **Kupno fizycznych gramów** - każda wpłata kupuje rzeczywiste gramy metali
-    2. **Brak sprzedaży** - nie sprzedajemy posiadanych gramów
-    3. **Inteligentny zakup** - nowe środki kierujemy proporcjonalnie więcej do metali poniżej docelowej alokacji
-    4. **Wykorzystanie zmienności cen** - automatycznie kupujemy więcej gdy ceny spadają
-    5. **Minimalne koszty** - brak kosztów sprzedaży i podatków od zysków kapitałowych
-    
-    **Przykład:** Jeśli złoto ma stanowić 40% portfela, ale aktualnie stanowi 35%, większa część 
-    nowych wpłat zostanie przeznaczona na zakup gramów złota.
-    """)
-
 # Footer
 st.markdown("---")
 st.markdown("*Aplikacja wykorzystuje rzeczywiste dane historyczne LBMA • Ceny w EUR za gram*")
-
