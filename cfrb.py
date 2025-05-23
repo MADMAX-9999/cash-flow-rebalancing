@@ -26,8 +26,11 @@ def load_lbma_data():
         # Wczytanie danych z pliku CSV
         df = pd.read_csv('lbma_data.csv')
         
-        # Konwersja dat
-        df['Date'] = pd.to_datetime(df['Date'])
+        # Konwersja dat - upewnij się, że są w formacie datetime
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        
+        # Usuń rekordy z nieprawidłowymi datami
+        df = df.dropna(subset=['Date'])
         
         # Konwersja z uncji na gramy (podzielenie przez wagę uncji trojańskiej)
         df['Gold_EUR_per_gram'] = df['Gold_EUR'] / TROY_OUNCE_TO_GRAMS
@@ -49,9 +52,15 @@ def load_lbma_data():
 def calculate_monthly_returns(df, start_date, months):
     """Oblicz miesięczne zmiany cen na podstawie rzeczywistych danych LBMA"""
     
-    # Konwersja start_date na datetime jeśli jest stringiem
+    # Konwersja start_date na datetime
     if isinstance(start_date, str):
-        start_date = datetime.strptime(start_date, '%Y-%m-%d')
+        start_date = pd.to_datetime(start_date)
+    elif hasattr(start_date, 'date'):  # jeśli to obiekt date z Streamlit
+        start_date = pd.to_datetime(start_date)
+    
+    # Upewnij się, że kolumna Date jest w formacie datetime
+    if not pd.api.types.is_datetime64_any_dtype(df['Date']):
+        df['Date'] = pd.to_datetime(df['Date'])
     
     # Filtrowanie danych od podanej daty
     df_filtered = df[df['Date'] >= start_date].copy()
@@ -164,16 +173,22 @@ simulation_months = st.sidebar.slider(
 )
 
 # Wybór okresu startowego dla danych historycznych
-if lbma_df is not None:
-    min_date = lbma_df['Date'].min().date()
-    max_date = lbma_df['Date'].max().date()
-    
-    start_date = st.sidebar.date_input(
-        "Data rozpoczęcia symulacji",
-        value=max_date - timedelta(days=365*2),  # 2 lata wstecz
-        min_value=min_date,
-        max_value=max_date
-    )
+if lbma_df is not None and len(lbma_df) > 0:
+    try:
+        min_date = lbma_df['Date'].min().date()
+        max_date = lbma_df['Date'].max().date()
+        
+        start_date = st.sidebar.date_input(
+            "Data rozpoczęcia symulacji",
+            value=max_date - timedelta(days=365*2),  # 2 lata wstecz
+            min_value=min_date,
+            max_value=max_date
+        )
+    except Exception as e:
+        st.sidebar.error(f"Błąd z datami: {str(e)}")
+        start_date = None
+else:
+    start_date = None
 
 rebalance_frequency = st.sidebar.selectbox(
     "Częstotliwość rebalansingu",
@@ -299,7 +314,7 @@ def run_portfolio_simulation(initial_inv, monthly_cont, months, rebalance_freq, 
     return pd.DataFrame(simulation_data), portfolio_grams, prices
 
 # Uruchomienie symulacji
-if run_simulation and total_allocation == 100 and lbma_df is not None:
+if run_simulation and total_allocation == 100 and lbma_df is not None and start_date is not None:
     with st.spinner('🔄 Analizowanie danych LBMA i symulowanie inwestycji...'):
         
         target_allocations = {
@@ -477,8 +492,10 @@ if run_simulation and total_allocation == 100 and lbma_df is not None:
 
 elif run_simulation and total_allocation != 100:
     st.error("❌ Nie można uruchomić symulacji - suma alokacji musi wynosić 100%!")
-elif lbma_df is None:
+elif run_simulation and lbma_df is None:
     st.error("❌ Nie można uruchomić symulacji - problem z wczytaniem danych LBMA!")
+elif run_simulation and start_date is None:
+    st.error("❌ Nie można uruchomić symulacji - problem z wyborem daty startowej!")
 
 # Informacje o aplikacji
 st.markdown("---")
