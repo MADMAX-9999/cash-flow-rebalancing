@@ -1,65 +1,4 @@
-# Wykres alokacji w czasie
-        if auto_rebalancing:
-            st.subheader("🎯 Precyzja AUTO-CASH-FLOW REBALANCING")
-            st.info("W trybie AUTO alokacja powinna być idealnie utrzymana na poziomie docelowym")
-        elif band_rebalancing:
-            st.subheader("📊 BAND REBALANCING - Pasma tolerancji")
-            st.info(f"Rebalansing następuje gdy metal wyjdzie poza swoje pasmo • Liczba interwencji: {len(triggers)}")
-        else:
-            st.subheader("📊 Zmiana alokacji w czasie")
-        
-        fig_allocation = go.Figure()
-        
-        # Dodaj pasma tolerancji dla BAND REBALANCING
-        if band_rebalancing and bands:
-            metals_info = [
-                ('Złoto', target_gold, bands['gold'], 'gold'),
-                ('Srebro', target_silver, bands['silver'], 'silver'), 
-                ('Platyna', target_platinum, bands['platinum'], 'lightgray'),
-                ('Pallad', target_palladium, bands['palladium'], 'lightsteelblue')
-            ]
-            
-            for metal_name, target_pct, band_width, color in metals_info:
-                # Górna granica pasma
-                fig_allocation.add_hline(
-                    y=target_pct + band_width, 
-                    line_dash="dash", 
-                    line_color=color,
-                    opacity=0.7,
-                    annotation_text=f"{metal_name} +{band_width}%",
-                    annotation_position="right"
-                )
-                # Dolna granica pasma
-                fig_allocation.add_hline(
-                    y=target_pct - band_width, 
-                    line_dash="dash", 
-                    line_color=color,
-                    opacity=0.7,
-                    annotation_text=f"{metal_name} -{band_width}%",
-                    annotation_position="right"
-                )
-                # Cel (środek pasma)
-                fig_allocation.add_hline(
-                    y=target_pct, 
-                    line_dash="solid", 
-                    line_color=color,
-                    opacity=0.5,
-                    line_width=1
-                )
-        elif not band_rebalancing:
-            # Dodaj linie docelowych alokacji jako punkty odniesienia (dla innych trybów)
-            for metal, target_pct in [('Złoto', target_gold), ('Srebro', target_silver), 
-                                     ('Platyna', target_platinum), ('Pallad', target_palladium)]:
-                fig_allocation.add_hline(
-                    y=target_pct, 
-                    line_dash="dash", 
-                    line_color="red",
-                    annotation_text=f"Cel {metal}: {target_pct}%",
-                    annotation_position="right"
-                )
-        
-        # Dodaj rzeczywiste alokacje
-        colors_allocation = {'Złoto_%': 'gold', 'Srebro_%': 'silver', 'Platyna_%': 'lightgray', import streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -858,3 +797,4 @@ with st.expander("🔄 Jak działa rebalansing metodą cash-flow?"):
 # Footer
 st.markdown("---")
 st.markdown("*Aplikacja wykorzystuje rzeczywiste dane historyczne LBMA • Ceny w EUR za gram*")
+
