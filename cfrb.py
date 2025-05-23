@@ -49,20 +49,24 @@ def load_lbma_data():
         st.error(f"❌ Błąd podczas wczytywania danych: {str(e)}")
         return None
 
-def calculate_monthly_returns(df, start_date, months):
+def calculate_monthly_returns(df, start_date, end_date, months):
     """Oblicz miesięczne zmiany cen na podstawie rzeczywistych danych LBMA"""
     
     try:
-        # Konwersja start_date na datetime - różne przypadki
-        if pd.api.types.is_datetime64_any_dtype(start_date):
-            start_date_dt = start_date
-        elif isinstance(start_date, str):
+        # Konwersja dat na datetime
+        if isinstance(start_date, str):
             start_date_dt = pd.to_datetime(start_date)
-        elif hasattr(start_date, 'date'):  # obiekt date z Streamlit
+        elif hasattr(start_date, 'date'):
             start_date_dt = pd.to_datetime(start_date)
         else:
-            # Konwersja przez string
             start_date_dt = pd.to_datetime(str(start_date))
+            
+        if isinstance(end_date, str):
+            end_date_dt = pd.to_datetime(end_date)
+        elif hasattr(end_date, 'date'):
+            end_date_dt = pd.to_datetime(end_date)
+        else:
+            end_date_dt = pd.to_datetime(str(end_date))
         
         # Upewnij się, że kolumna Date jest w formacie datetime
         if not pd.api.types.is_datetime64_any_dtype(df['Date']):
@@ -70,17 +74,18 @@ def calculate_monthly_returns(df, start_date, months):
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
             df = df.dropna(subset=['Date'])
         
-        # Konwersja na ten sam timezone (usuń timezone jeśli istnieje)
+        # Usuń timezone jeśli istnieje
         if hasattr(start_date_dt, 'tz') and start_date_dt.tz is not None:
             start_date_dt = start_date_dt.tz_localize(None)
-        
-        # Usuń timezone z kolumny Date jeśli istnieje
+        if hasattr(end_date_dt, 'tz') and end_date_dt.tz is not None:
+            end_date_dt = end_date_dt.tz_localize(None)
+            
         if hasattr(df['Date'].dtype, 'tz') and df['Date'].dtype.tz is not None:
             df = df.copy()
             df['Date'] = df['Date'].dt.tz_localize(None)
         
-        # Filtrowanie danych od podanej daty
-        df_filtered = df[df['Date'] >= start_date_dt].copy()
+        # Filtrowanie danych w wybranym okresie
+        df_filtered = df[(df['Date'] >= start_date_dt) & (df['Date'] <= end_date_dt)].copy()
         
     except Exception as e:
         st.error(f"Błąd w calculate_monthly_returns: {str(e)}")
@@ -186,31 +191,50 @@ monthly_contribution = st.sidebar.number_input(
     step=50
 )
 
-simulation_months = st.sidebar.slider(
-    "Okres symulacji (miesiące)", 
-    min_value=6, 
-    max_value=60, 
-    value=24, 
-    step=6
-)
-
-# Wybór okresu startowego dla danych historycznych
+# Wybór okresu inwestycji z kalendarza
 if lbma_df is not None and len(lbma_df) > 0:
     try:
         min_date = lbma_df['Date'].min().date()
         max_date = lbma_df['Date'].max().date()
         
+        st.sidebar.subheader("📅 Okres inwestycji")
+        st.sidebar.markdown(f"*Dostępne dane: {min_date} - {max_date}*")
+        
+        # Domyślny przedział: ostatnie 2 lata
+        default_start = max_date - timedelta(days=365*2)
+        default_end = max_date - timedelta(days=30)  # miesiąc przed końcem danych
+        
         start_date = st.sidebar.date_input(
-            "Data rozpoczęcia symulacji",
-            value=max_date - timedelta(days=365*2),  # 2 lata wstecz
+            "📅 Data rozpoczęcia inwestycji",
+            value=default_start,
             min_value=min_date,
+            max_value=max_date - timedelta(days=30)  # przynajmniej miesiąc przed końcem
+        )
+        
+        end_date = st.sidebar.date_input(
+            "🏁 Data zakończenia inwestycji",
+            value=default_end,
+            min_value=start_date + timedelta(days=30) if start_date else min_date,
             max_value=max_date
         )
+        
+        # Oblicz liczbę miesięcy między datami
+        if start_date and end_date and end_date > start_date:
+            simulation_months = max(1, int((end_date - start_date).days / 30.44))  # średnio 30.44 dni w miesiącu
+            st.sidebar.info(f"📊 Okres symulacji: **{simulation_months} miesięcy** ({(end_date - start_date).days} dni)")
+        else:
+            simulation_months = 1
+            st.sidebar.warning("⚠️ Data zakończenia musi być późniejsza niż rozpoczęcia")
+            
     except Exception as e:
         st.sidebar.error(f"Błąd z datami: {str(e)}")
         start_date = None
+        end_date = None
+        simulation_months = 24
 else:
     start_date = None
+    end_date = None
+    simulation_months = 24
 
 rebalance_frequency = st.sidebar.selectbox(
     "Częstotliwość rebalansingu",
@@ -336,7 +360,7 @@ def run_portfolio_simulation(initial_inv, monthly_cont, months, rebalance_freq, 
     return pd.DataFrame(simulation_data), portfolio_grams, prices
 
 # Uruchomienie symulacji
-if run_simulation and total_allocation == 100 and lbma_df is not None and start_date is not None:
+if run_simulation and total_allocation == 100 and lbma_df is not None and start_date is not None and end_date is not None and end_date > start_date:
     with st.spinner('🔄 Analizowanie danych LBMA i symulowanie inwestycji...'):
         
         target_allocations = {
@@ -347,7 +371,7 @@ if run_simulation and total_allocation == 100 and lbma_df is not None and start_
         }
         
         # Oblicz miesięczne zmiany cen na podstawie rzeczywistych danych
-        price_changes, monthly_avg = calculate_monthly_returns(lbma_df, start_date, simulation_months)
+        price_changes, monthly_avg = calculate_monthly_returns(lbma_df, start_date, end_date, simulation_months)
         
         # Uruchom symulację
         df, final_grams, final_prices = run_portfolio_simulation(
@@ -389,10 +413,11 @@ if run_simulation and total_allocation == 100 and lbma_df is not None and start_
             )
         
         with col4:
+            actual_days = (end_date - start_date).days
             st.metric(
                 "📅 Okres", 
                 f"{simulation_months} miesięcy",
-                f"{simulation_months/12:.1f} lat"
+                f"{actual_days} dni ({actual_days/365.25:.1f} lat)"
             )
         
         # Wykresy
@@ -516,8 +541,10 @@ elif run_simulation and total_allocation != 100:
     st.error("❌ Nie można uruchomić symulacji - suma alokacji musi wynosić 100%!")
 elif run_simulation and lbma_df is None:
     st.error("❌ Nie można uruchomić symulacji - problem z wczytaniem danych LBMA!")
-elif run_simulation and start_date is None:
-    st.error("❌ Nie można uruchomić symulacji - problem z wyborem daty startowej!")
+elif run_simulation and (start_date is None or end_date is None):
+    st.error("❌ Nie można uruchomić symulacji - wybierz poprawne daty rozpoczęcia i zakończenia!")
+elif run_simulation and end_date <= start_date:
+    st.error("❌ Data zakończenia musi być późniejsza niż data rozpoczęcia!")
 
 # Informacje o aplikacji
 st.markdown("---")
