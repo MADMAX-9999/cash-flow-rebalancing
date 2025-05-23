@@ -467,9 +467,7 @@ def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, mont
                             })
 
 
-
-
-    elif auto_rebalancing:
+elif auto_rebalancing:
                     # AUTO-CASH-FLOW: dodaj tyle środków ile potrzeba dla idealnego rebalansingu
                     underweight_metals = {k: v for k, v in allocation_differences.items() if v > 0}
                     
@@ -495,15 +493,6 @@ def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, mont
                 else:
                     # Rebalansing z ograniczonym budżetem (poprzednia logika)
                     underweight_metals = {k: v for k, v in allocation_differences.items() if v > 0}
-
-
-
-
-
-
-
-
-
 
 
 
