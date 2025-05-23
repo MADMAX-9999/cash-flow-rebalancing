@@ -52,18 +52,48 @@ def load_lbma_data():
 def calculate_monthly_returns(df, start_date, months):
     """Oblicz miesięczne zmiany cen na podstawie rzeczywistych danych LBMA"""
     
-    # Konwersja start_date na datetime
-    if isinstance(start_date, str):
-        start_date = pd.to_datetime(start_date)
-    elif hasattr(start_date, 'date'):  # jeśli to obiekt date z Streamlit
-        start_date = pd.to_datetime(start_date)
-    
-    # Upewnij się, że kolumna Date jest w formacie datetime
-    if not pd.api.types.is_datetime64_any_dtype(df['Date']):
-        df['Date'] = pd.to_datetime(df['Date'])
-    
-    # Filtrowanie danych od podanej daty
-    df_filtered = df[df['Date'] >= start_date].copy()
+    try:
+        # Debug - sprawdź typy danych
+        st.write(f"Debug - start_date type: {type(start_date)}")
+        st.write(f"Debug - start_date value: {start_date}")
+        st.write(f"Debug - df['Date'] dtype: {df['Date'].dtype}")
+        
+        # Konwersja start_date na datetime - różne przypadki
+        if pd.api.types.is_datetime64_any_dtype(start_date):
+            start_date_dt = start_date
+        elif isinstance(start_date, str):
+            start_date_dt = pd.to_datetime(start_date)
+        elif hasattr(start_date, 'date'):  # obiekt date z Streamlit
+            start_date_dt = pd.to_datetime(start_date)
+        else:
+            # Konwersja przez string
+            start_date_dt = pd.to_datetime(str(start_date))
+        
+        # Upewnij się, że kolumna Date jest w formacie datetime
+        if not pd.api.types.is_datetime64_any_dtype(df['Date']):
+            df = df.copy()
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+            df = df.dropna(subset=['Date'])
+        
+        # Konwersja na ten sam timezone (usuń timezone jeśli istnieje)
+        if hasattr(start_date_dt, 'tz') and start_date_dt.tz is not None:
+            start_date_dt = start_date_dt.tz_localize(None)
+        
+        # Usuń timezone z kolumny Date jeśli istnieje
+        if hasattr(df['Date'].dtype, 'tz') and df['Date'].dtype.tz is not None:
+            df = df.copy()
+            df['Date'] = df['Date'].dt.tz_localize(None)
+        
+        st.write(f"Debug - po konwersji start_date_dt: {start_date_dt} (type: {type(start_date_dt)})")
+        st.write(f"Debug - po konwersji df['Date'] dtype: {df['Date'].dtype}")
+        
+        # Filtrowanie danych od podanej daty
+        df_filtered = df[df['Date'] >= start_date_dt].copy()
+        
+    except Exception as e:
+        st.error(f"Błąd w calculate_monthly_returns: {str(e)}")
+        st.write("Używam fallback - symulowane dane")
+        return generate_simulated_returns(months), pd.DataFrame()
     
     if len(df_filtered) == 0:
         st.warning(f"⚠️ Brak danych od {start_date.strftime('%Y-%m-%d')}. Używam najnowszych dostępnych danych.")
@@ -103,6 +133,7 @@ def calculate_monthly_returns(df, start_date, months):
 
 def generate_simulated_returns(months):
     """Generuj symulowane zwroty jako fallback"""
+    np.random.seed(42)  # Dla powtarzalności
     return {
         'gold': np.random.normal(0.008, 0.025, months).tolist(),
         'silver': np.random.normal(0.005, 0.035, months).tolist(),
