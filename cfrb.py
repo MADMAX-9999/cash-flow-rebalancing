@@ -465,9 +465,8 @@ def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, mont
                                 'metals': list(metals_outside_bands.keys()),
                                 'spent': rebalancing_spent_this_cycle
                             })
-
-
-elif auto_rebalancing:
+                
+                elif auto_rebalancing:
                     # AUTO-CASH-FLOW: dodaj tyle środków ile potrzeba dla idealnego rebalansingu
                     underweight_metals = {k: v for k, v in allocation_differences.items() if v > 0}
                     
@@ -495,48 +494,6 @@ elif auto_rebalancing:
                     underweight_metals = {k: v for k, v in allocation_differences.items() if v > 0}
                     
                     if underweight_metals and rebalancing_budget > 0:
-                        available_rebalancing_budget = rebalancing_budget * rebalance_freq
-                        total_deficit = sum(underweight_metals.values())
-                        
-                        for metal, deficit in underweight_metals.items():
-                            if rebalancing_spent_this_cycle >= available_rebalancing_budget:
-                                break
-                                
-                            deficit_ratio = deficit / total_deficit
-                            rebalancing_eur = min(
-                                available_rebalancing_budget * deficit_ratio,
-                                available_rebalancing_budget - rebalancing_spent_this_cycle
-                            )
-                            
-                            if rebalancing_eur > 0:
-                                grams_to_add = rebalancing_eur / prices[metal]
-                                portfolio_grams[metal] += grams_to_add
-                                rebalancing_spent_this_cycle += rebalancing_eur
-                        
-                        if rebalancing_spent_this_cycle > 0:
-                            rebalancing_triggers.append({
-                                'month': month,
-                                'reason': 'Fixed budget',
-                                'metals': list(underweight_metals.keys()),
-                                'spent': rebalancing_spent_this_cycle
-                            })
-                
-                total_rebalancing_spent += rebalancing_spent_this_cycle
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-if underweight_metals and rebalancing_budget > 0:
                         available_rebalancing_budget = rebalancing_budget * rebalance_freq
                         total_deficit = sum(underweight_metals.values())
                         
@@ -598,6 +555,8 @@ if underweight_metals and rebalancing_budget > 0:
         simulation_data.append(month_data)
     
     return pd.DataFrame(simulation_data), portfolio_grams, prices, total_regular_invested, total_rebalancing_spent, rebalancing_triggers
+
+# Uruchomienie symulacji
 
 
 # Uruchomienie symulacji
