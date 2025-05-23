@@ -191,14 +191,27 @@ monthly_contribution = st.sidebar.number_input(
     step=50
 )
 
-rebalancing_budget = st.sidebar.number_input(
-    "Budżet na rebalansing (EUR/miesiąc)", 
-    min_value=0, 
-    max_value=5000, 
-    value=100, 
-    step=25,
-    help="Dodatkowe środki przeznaczone wyłącznie na rebalansing portfela"
+rebalancing_mode = st.sidebar.selectbox(
+    "Tryb rebalansingu",
+    options=["Budżet stały", "AUTO-CASH-FLOW"],
+    index=0,
+    help="Budżet stały: określasz maksymalną kwotę na rebalansing\nAUTO-CASH-FLOW: system automatycznie dodaje środki potrzebne do idealnego rebalansingu"
 )
+
+if rebalancing_mode == "Budżet stały":
+    rebalancing_budget = st.sidebar.number_input(
+        "Budżet na rebalansing (EUR/miesiąc)", 
+        min_value=0, 
+        max_value=5000, 
+        value=100, 
+        step=25,
+        help="Dodatkowe środki przeznaczone wyłącznie na rebalansing portfela"
+    )
+    auto_rebalancing = False
+else:
+    st.sidebar.info("🤖 **AUTO-CASH-FLOW REBALANCING**\n\nSystem automatycznie doliczy środki potrzebne do idealnego utrzymania proporcji portfela")
+    rebalancing_budget = 0  # Nie używany w trybie auto
+    auto_rebalancing = True
 
 # Wybór okresu inwestycji z kalendarza
 if lbma_df is not None and len(lbma_df) > 0:
@@ -268,8 +281,8 @@ if total_allocation != 100:
 # Przycisk uruchomienia symulacji
 run_simulation = st.sidebar.button("🚀 Uruchom Symulację", type="primary")
 
-def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, months, rebalance_freq, allocations, price_changes):
-    """Główna funkcja symulacji portfela z rzeczywistymi danymi i oddzielnym budżetem na rebalancing"""
+def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, months, rebalance_freq, allocations, price_changes, auto_rebalancing=False):
+    """Główna funkcja symulacji portfela z rzeczywistymi danymi i elastycznym rebalancingiem"""
     
     # Inicjalizacja portfela w gramach
     if current_prices:
@@ -282,13 +295,13 @@ def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, mont
     else:
         # Fallback - symulowane ceny startowe
         initial_grams = {
-            'gold': (initial_inv * allocations['gold'] / 100) / 75,  # ~75 EUR/gram dla złota
-            'silver': (initial_inv * allocations['silver'] / 100) / 0.95,  # ~0.95 EUR/gram dla srebra
-            'platinum': (initial_inv * allocations['platinum'] / 100) / 27,  # ~27 EUR/gram dla platyny
-            'palladium': (initial_inv * allocations['palladium'] / 100) / 26   # ~26 EUR/gram dla palladu
+            'gold': (initial_inv * allocations['gold'] / 100) / 75,
+            'silver': (initial_inv * allocations['silver'] / 100) / 0.95,
+            'platinum': (initial_inv * allocations['platinum'] / 100) / 27,
+            'palladium': (initial_inv * allocations['palladium'] / 100) / 26
         }
     
-    # Symulowane ceny startowe (aktualne ceny lub fallback)
+    # Symulowane ceny startowe
     prices = current_prices.copy() if current_prices else {
         'gold': 75.0, 'silver': 0.95, 'platinum': 27.0, 'palladium': 26.0
     }
@@ -315,10 +328,9 @@ def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, mont
                     grams_to_add = eur_to_invest / prices[metal]
                     portfolio_grams[metal] += grams_to_add
             
-            # Rebalansing co określoną liczbę miesięcy (z oddzielnego budżetu)
-            if month % rebalance_freq == 0 and rebalancing_budget > 0:
+            # Rebalansing co określoną liczbę miesięcy
+            if month % rebalance_freq == 0:
                 rebalancing_spent_this_cycle = 0
-                available_rebalancing_budget = rebalancing_budget * rebalance_freq
                 
                 # Oblicz aktualną wartość portfela i alokację
                 current_values = {
@@ -335,31 +347,43 @@ def run_portfolio_simulation(initial_inv, monthly_cont, rebalancing_budget, mont
                     difference = target_percent - current_percent
                     allocation_differences[metal] = difference
                 
-                # Znajdź metale które są poniżej docelowej alokacji (potrzebują dokapitalizowania)
+                # Znajdź metale które są poniżej docelowej alokacji
                 underweight_metals = {k: v for k, v in allocation_differences.items() if v > 0}
                 
                 if underweight_metals:
-                    # Oblicz łączny deficyt procentowy
-                    total_deficit = sum(underweight_metals.values())
-                    
-                    # Rozdziel budżet rebalansingu proporcjonalnie do deficytów
-                    for metal, deficit in underweight_metals.items():
-                        if rebalancing_spent_this_cycle >= available_rebalancing_budget:
-                            break
+                    if auto_rebalancing:
+                        # AUTO-CASH-FLOW: dodaj tyle środków ile potrzeba dla idealnego rebalansingu
+                        for metal, deficit in underweight_metals.items():
+                            # Oblicz ile EUR potrzeba, żeby ten metal osiągnął docelową alokację
+                            target_value = current_total * (allocations[metal] / 100)
+                            current_value = current_values[metal]
+                            needed_eur = target_value - current_value
                             
-                        # Proporcja deficytu tego metalu do całkowitego deficytu
-                        deficit_ratio = deficit / total_deficit
+                            if needed_eur > 0:
+                                grams_to_add = needed_eur / prices[metal]
+                                portfolio_grams[metal] += grams_to_add
+                                rebalancing_spent_this_cycle += needed_eur
+                    else:
+                        # Rebalansing z ograniczonym budżetem (poprzednia logika)
+                        available_rebalancing_budget = rebalancing_budget * rebalance_freq
                         
-                        # Środki przeznaczone na ten metal z budżetu rebalansingu
-                        rebalancing_eur = min(
-                            available_rebalancing_budget * deficit_ratio,
-                            available_rebalancing_budget - rebalancing_spent_this_cycle
-                        )
-                        
-                        if rebalancing_eur > 0:
-                            grams_to_add = rebalancing_eur / prices[metal]
-                            portfolio_grams[metal] += grams_to_add
-                            rebalancing_spent_this_cycle += rebalancing_eur
+                        if available_rebalancing_budget > 0:
+                            total_deficit = sum(underweight_metals.values())
+                            
+                            for metal, deficit in underweight_metals.items():
+                                if rebalancing_spent_this_cycle >= available_rebalancing_budget:
+                                    break
+                                    
+                                deficit_ratio = deficit / total_deficit
+                                rebalancing_eur = min(
+                                    available_rebalancing_budget * deficit_ratio,
+                                    available_rebalancing_budget - rebalancing_spent_this_cycle
+                                )
+                                
+                                if rebalancing_eur > 0:
+                                    grams_to_add = rebalancing_eur / prices[metal]
+                                    portfolio_grams[metal] += grams_to_add
+                                    rebalancing_spent_this_cycle += rebalancing_eur
                 
                 total_rebalancing_spent += rebalancing_spent_this_cycle
         
@@ -419,7 +443,8 @@ if run_simulation and total_allocation == 100 and lbma_df is not None and start_
             simulation_months,
             rebalance_frequency,
             target_allocations,
-            price_changes
+            price_changes,
+            auto_rebalancing
         )
         
         # Obliczenia finansowe
@@ -453,11 +478,18 @@ if run_simulation and total_allocation == 100 and lbma_df is not None and start_
             )
         
         with col4:
-            st.metric(
-                "⚖️ Budżet rebalansingu", 
-                f"{total_rebalancing:,.0f} €",
-                f"{(total_rebalancing/total_invested)*100:.1f}% całości"
-            )
+            if auto_rebalancing:
+                st.metric(
+                    "🤖 AUTO-REBALANCING", 
+                    f"{total_rebalancing:,.0f} €",
+                    f"Idealne utrzymanie proporcji"
+                )
+            else:
+                st.metric(
+                    "⚖️ Budżet rebalansingu", 
+                    f"{total_rebalancing:,.0f} €",
+                    f"{(total_rebalancing/total_invested)*100:.1f}% całości"
+                )
         
         with col5:
             actual_days = (end_date - start_date).days
